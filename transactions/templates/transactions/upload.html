@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Budget Transactions Upload</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 900px; margin: 2rem auto; line-height: 1.6; }
+        .field { margin-bottom: 1rem; }
+        label { display: block; font-weight: 600; margin-bottom: 0.4rem; }
+        input[type=file] { width: 100%; }
+        button { padding: 0.7rem 1.2rem; background: #2f72b7; color: white; border: none; cursor: pointer; }
+        button:hover { background: #265a94; }
+        .message { margin: 1rem 0; padding: 1rem; background: #e8f4ff; border-left: 4px solid #2f72b7; }
+        table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+        th, td { border: 1px solid #ddd; padding: 0.6rem; }
+        th { background: #f4f6fb; }
+    </style>
+</head>
+<body>
+<h1>Upload Transactions CSV</h1>
+<p>Upload the transaction export and store rows in the SQLite database. The Category column will be preserved for later ML prediction.</p>
+{% if message %}
+<div class="message">{{ message }}</div>
+{% endif %}
+<form method="post" enctype="multipart/form-data">
+    {% csrf_token %}
+    <div class="field">{{ form.file.label_tag }} {{ form.file }}</div>
+    <button type="submit">Upload CSV</button>
+</form>
+
+{% if created %}
+<p>{{ created }} transaction rows imported.</p>
+{% endif %}
+
+{% if recent_transactions %}
+<h2>Recent Transactions</h2>
+<table>
+    <thead>
+        <tr>
+            <th>Date</th>
+            <th>Partner</th>
+            <th>Category</th>
+            <th>Amount</th>
+            <th>Type</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for transaction in recent_transactions %}
+        <tr>
+            <td>{{ transaction.booking_date }}</td>
+            <td>{{ transaction.partner_name }}</td>
+            <td>{{ transaction.category|default:'Uncategorized' }}</td>
+            <td>{{ transaction.amount_eur }}</td>
+            <td>{{ transaction.transaction_type }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endif %}
+
+<p>API stats endpoint: <a href="{{ stats_url }}">{{ stats_url }}</a></p>
+</body>
+</html>
