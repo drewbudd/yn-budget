@@ -450,3 +450,94 @@ def category_totals(request):
             for item in spending_totals
         ],
     })
+
+
+def category_trend(request):
+    category = request.GET.get('category')
+    if not category:
+        return HttpResponseBadRequest('Category is required')
+
+    period = request.GET.get('period', 'month')
+    year = request.GET.get('year')
+    month = request.GET.get('month')
+    lookback_months = request.GET.get('lookback_months')
+
+    if not year:
+        return HttpResponseBadRequest('Year is required')
+    try:
+        year_val = int(year)
+    except ValueError:
+        return HttpResponseBadRequest('Invalid year')
+
+    queryset = Transaction.objects.filter(category__iexact=category).exclude(category__iexact='Savings')
+
+    if period == 'month':
+        if month is None:
+            return HttpResponseBadRequest('Month is required for period=month')
+        try:
+            month_val = int(month)
+        except ValueError:
+            return HttpResponseBadRequest('Invalid month')
+
+        if lookback_months:
+            try:
+                lookback_val = int(lookback_months)
+            except ValueError:
+                return HttpResponseBadRequest('Invalid lookback_months')
+            from datetime import date
+            import calendar
+
+            end_date = date(year_val, month_val, calendar.monthrange(year_val, month_val)[1])
+            start_month = month_val - (lookback_val - 1)
+            start_year = year_val
+            while start_month <= 0:
+                start_month += 12
+                start_year -= 1
+            start_date = date(start_year, start_month, 1)
+            end_day = calendar.monthrange(end_date.year, end_date.month)[1]
+            end_date = end_date.replace(day=end_day)
+            queryset = queryset.filter(value_date__range=(start_date, end_date))
+        else:
+            queryset = queryset.filter(value_date__year=year_val, value_date__month=month_val)
+    elif period == 'year':
+        queryset = queryset.filter(value_date__year=year_val)
+    elif period not in ('all',):
+        return HttpResponseBadRequest('Invalid period')
+
+    monthly = (
+        queryset
+        .annotate(year=ExtractYear('value_date'), month=ExtractMonth('value_date'))
+        .values('year', 'month')
+        .annotate(
+            total=Sum('amount_eur'),
+            spending=Sum(
+                Case(
+                    When(amount_eur__lt=0, then='amount_eur'),
+                    default=Value(0),
+                    output_field=DecimalField(),
+                )
+            ),
+            income=Sum(
+                Case(
+                    When(amount_eur__gt=0, then='amount_eur'),
+                    default=Value(0),
+                    output_field=DecimalField(),
+                )
+            ),
+        )
+        .order_by('year', 'month')
+    )
+
+    return JsonResponse({
+        'category': category,
+        'monthly_totals': [
+            {
+                'year': item['year'],
+                'month': item['month'],
+                'total': item['total'],
+                'spending': item['spending'],
+                'income': item['income'],
+            }
+            for item in monthly
+        ],
+    })
