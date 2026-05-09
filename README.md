@@ -32,6 +32,35 @@ python manage.py runserver
 - Stores transaction metadata including category, partner, amount, currency, and exchange rate.
 - Includes a JSON endpoint for aggregated stats by month and category.
 - Automatically predicts missing `Category` values during CSV import using an ML model trained from existing labeled transactions.
+- Includes a Vue + TypeScript dashboard scaffold for spending visualizations.
+
+## Frontend setup
+
+The frontend lives in the `frontend/` folder and is built with Vue 3, TypeScript, Vite, and ECharts.
+
+1. Install Node dependencies:
+
+```bash
+cd frontend
+npm install
+```
+
+2. Build the frontend assets:
+
+```bash
+npm run build
+```
+
+3. Run Django normally:
+
+```bash
+cd ..
+python manage.py runserver
+```
+
+4. Open the dashboard at `http://127.0.0.1:8000/dashboard/`.
+
+If you want to work on the frontend interactively, run `npm run dev` inside `frontend/` and use the Vite dev server.
 
 ## Notes
 

@@ -17,10 +17,11 @@ class Transaction(models.Model):
     imported_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        ordering = ['-booking_date', '-id']
+        ordering = ['-value_date', '-booking_date', '-id']
 
     def __str__(self):
-        return f'{self.booking_date} {self.partner_name or "Unknown"} {self.amount_eur}'
+        date_value = self.value_date or self.booking_date
+        return f'{date_value} {self.partner_name or "Unknown"} {self.amount_eur}'
 
     @staticmethod
     def parse_decimal(value):
