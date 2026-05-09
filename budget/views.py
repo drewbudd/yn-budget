@@ -79,7 +79,7 @@ def upload_csv(request):
     recent_transactions = Transaction.objects.order_by('-booking_date')[:10]
     return render(
         request,
-        'transactions/upload.html',
+        'budget/upload.html',
         {
             'form': form,
             'message': message,

@@ -5,7 +5,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from django.core.management.base import BaseCommand
-from transactions.models import Transaction
+from budget.models import Transaction
 
 
 def parse_decimal(raw_value):
