@@ -53,6 +53,23 @@
 
     <div class="chart-grid">
       <div class="chart-card full-width-card">
+        <h3>Category Trend</h3>
+        <div class="chart-filters">
+          <label>
+            Category
+            <select v-model="selectedCategoryForTrend" @change="buildCategoryTrendChart">
+              <option :value="null">Select a category</option>
+              <option v-for="cat in allCategoriesForTrend" :key="cat" :value="cat">{{ cat }}</option>
+            </select>
+          </label>
+        </div>
+        <div v-if="selectedCategoryForTrend" class="chart-summary">
+          Average Net: {{ formattedCategoryTrendAverage }}
+        </div>
+        <div v-if="selectedCategoryForTrend" ref="categoryTrendChart" class="chart"></div>
+        <p v-else class="chart-empty">Select a category to view trend.</p>
+      </div>
+      <div class="chart-card full-width-card">
         <h3>Category Totals</h3>
         <div class="two-column-charts">
           <div class="chart-card-small full-width-card-small">
@@ -115,6 +132,7 @@ export default {
     const categoryChart = ref<HTMLDivElement | null>(null)
     const incomeCategoryChart = ref<HTMLDivElement | null>(null)
     const spendingCategoryChart = ref<HTMLDivElement | null>(null)
+    const categoryTrendChart = ref<HTMLDivElement | null>(null)
     const monthComparisonChart = ref<HTMLDivElement | null>(null)
     const yearComparisonChart = ref<HTMLDivElement | null>(null)
     const monthlyTotals = ref<MonthlyRow[]>([])
@@ -124,10 +142,15 @@ export default {
     const savingsTotal = ref(0)
     const selectedYear = ref<number | null>(null)
     const selectedMonth = ref<number | null>(null)
+    const selectedCategoryForTrend = ref<string | null>(null)
+    const categoryTrendAverage = ref<number | null>(null)
     const period = ref<'month' | 'year'>('month')
     const lookbackMonths = ref(12)
 
     const formattedSavingsTotal = computed(() => formatCurrency(savingsTotal.value))
+    const formattedCategoryTrendAverage = computed(() =>
+      categoryTrendAverage.value !== null ? formatCurrency(categoryTrendAverage.value) : 'N/A',
+    )
 
     const sortedMonthly = computed(() =>
       [...monthlyTotals.value].sort((a, b) =>
@@ -174,10 +197,12 @@ export default {
         const item = sortedMonthly.value.find(
           (row) => row.year === selectedYear.value && row.month === selectedMonth.value,
         )
+        const spending = Number(item?.spending || 0)
+        const previousIncome = Number(selectedPreviousMonthRow.value?.income || 0)
         return {
-          spending: Number(item?.spending || 0),
-          income: Number(item?.income || 0),
-          total: Number(item?.total || 0),
+          spending,
+          income: previousIncome,
+          total: spending + previousIncome,
         }
       }
 
@@ -234,6 +259,10 @@ export default {
             .map((item) => item.month),
         ),
       ).sort((a, b) => a - b)
+    })
+
+    const allCategoriesForTrend = computed(() => {
+      return categoryTotals.value.map(item => item.category).sort()
     })
 
     const monthlyWithPriorIncome = computed(() =>
@@ -391,6 +420,111 @@ export default {
               name: item.category,
               value: Number(item.total),
             })),
+          },
+        ],
+      })
+    }
+
+    const buildCategoryTrendChart = async () => {
+      if (!categoryTrendChart.value || !selectedCategoryForTrend.value || !selectedYear.value) return
+      const params = new URLSearchParams()
+      params.set('category', selectedCategoryForTrend.value)
+      params.set('period', period.value)
+      params.set('year', String(selectedYear.value))
+      if (period.value === 'month' && selectedMonth.value) {
+        params.set('month', String(selectedMonth.value))
+        params.set('lookback_months', String(lookbackMonths.value))
+      }
+      const response = await fetch(`/stats/category-trend/?${params.toString()}`)
+      const data = await response.json()
+      const chart = echarts.init(categoryTrendChart.value)
+      const items = data.monthly_totals as MonthlyRow[]
+      const valueMap = new Map(
+        items.map((item) => [`${item.year}-${String(item.month).padStart(2, '0')}`, item]),
+      )
+
+      const rangeMonths: Array<{ year: number; month: number }> = []
+      if (period.value === 'year' && selectedYear.value) {
+        for (let m = 1; m <= 12; m += 1) {
+          rangeMonths.push({ year: selectedYear.value, month: m })
+        }
+      } else if (period.value === 'month' && selectedYear.value && selectedMonth.value) {
+        let year = selectedYear.value
+        let month = selectedMonth.value
+        for (let i = 0; i < lookbackMonths.value; i += 1) {
+          rangeMonths.unshift({ year, month })
+          month -= 1
+          if (month === 0) {
+            month = 12
+            year -= 1
+          }
+        }
+      } else {
+        rangeMonths.push(...items.map((item) => ({ year: item.year, month: item.month })))
+      }
+
+      const labels = rangeMonths.map((item) => monthLabel(item))
+      const incomeValues = rangeMonths.map((item) => {
+        const key = `${item.year}-${String(item.month).padStart(2, '0')}`
+        return Number(valueMap.get(key)?.income || 0)
+      })
+      const spendingValues = rangeMonths.map((item) => {
+        const key = `${item.year}-${String(item.month).padStart(2, '0')}`
+        return Number(valueMap.get(key)?.spending || 0)
+      })
+      const netValues = rangeMonths.map((item) => {
+        const key = `${item.year}-${String(item.month).padStart(2, '0')}`
+        return Number(valueMap.get(key)?.total || 0)
+      })
+      const averageNet = netValues.length
+        ? netValues.reduce((sum, value) => sum + value, 0) / netValues.length
+        : 0
+      categoryTrendAverage.value = averageNet
+      chart.setOption({
+        tooltip: {
+          trigger: 'axis',
+          formatter: (params: any) =>
+            params
+              .map(
+                (entry: any) => `${entry.marker} ${entry.seriesName}: ${formatCurrency(entry.value)}`,
+              )
+              .join('<br/>'),
+        },
+        legend: { data: ['Income', 'Spending', 'Net', 'Average Net'] },
+        xAxis: {
+          type: 'category',
+          data: labels,
+          axisLabel: { rotate: 30 },
+        },
+        yAxis: {
+          type: 'value',
+          axisLabel: { formatter: '{value} €' },
+        },
+        series: [
+          {
+            name: 'Income',
+            type: 'bar',
+            itemStyle: { color: '#10b981' },
+            data: incomeValues,
+          },
+          {
+            name: 'Spending',
+            type: 'bar',
+            itemStyle: { color: '#ef4444' },
+            data: spendingValues,
+          },
+          {
+            name: 'Net',
+            type: 'line',
+            itemStyle: { color: '#2563eb' },
+            data: netValues,
+          },
+          {
+            name: 'Average Net',
+            type: 'line',
+            itemStyle: { color: '#f59e0b' },
+            lineStyle: { type: 'dashed' },
+            data: Array(labels.length).fill(averageNet),
           },
         ],
       })
@@ -555,6 +689,9 @@ export default {
         buildMonthComparisonChart()
         buildYearComparisonChart()
       }
+      if (selectedCategoryForTrend.value) {
+        await buildCategoryTrendChart()
+      }
     }
 
     const loadStats = async () => {
@@ -599,16 +736,21 @@ export default {
       availableYears,
       availableMonths,
       availableMonthsForYear,
+      allCategoriesForTrend,
+      selectedCategoryForTrend,
+      categoryTrendChart,
       adjustedIncomePeriod,
       formattedTotalNet,
       formattedTotalSpending,
       formattedTotalIncome,
       formattedSavingsTotal,
+      formattedCategoryTrendAverage,
       savingsTotal,
       hasMonthOverMonthData,
       hasYearOverYearData,
       fetchCategoryTotals,
       handleSelectionChange,
+      buildCategoryTrendChart,
     }
   },
 }
@@ -660,6 +802,13 @@ export default {
   gap: 0.75rem;
   align-items: center;
   margin-bottom: 1rem;
+}
+
+.chart-summary {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #374151;
+  margin-bottom: 0.75rem;
 }
 
 .dashboard-controls {
