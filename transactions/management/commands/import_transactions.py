@@ -51,9 +51,10 @@ class Command(BaseCommand):
                 booking_date = parse_date(row.get('Booking Date'))
                 if not booking_date:
                     continue
+                value_date = parse_date(row.get('Value Date')) or booking_date
                 transaction = Transaction(
                     booking_date=booking_date,
-                    value_date=parse_date(row.get('Value Date')),
+                    value_date=value_date,
                     partner_name=row.get('Partner Name', '').strip(),
                     category=row.get('Category', '').strip() or None,
                     amount_eur=parse_decimal(row.get('Amount (EUR)')) or Decimal('0.00'),

@@ -20,6 +20,7 @@
 <body>
 <h1>Upload Transactions CSV</h1>
 <p>Upload the transaction export and store rows in the SQLite database. The Category column will be preserved for later ML prediction.</p>
+<p><a href="{{ dashboard_url }}">View the budget dashboard</a> | <a href="{{ stats_url }}">Raw stats JSON</a></p>
 {% if message %}
 <div class="message">{{ message }}</div>
 {% endif %}
@@ -38,7 +39,7 @@
 <table>
     <thead>
         <tr>
-            <th>Date</th>
+            <th>Value Date</th>
             <th>Partner</th>
             <th>Category</th>
             <th>Amount</th>
@@ -48,7 +49,7 @@
     <tbody>
         {% for transaction in recent_transactions %}
         <tr>
-            <td>{{ transaction.booking_date }}</td>
+            <td>{{ transaction.value_date }}</td>
             <td>{{ transaction.partner_name }}</td>
             <td>{{ transaction.category|default:'Uncategorized' }}</td>
             <td>{{ transaction.amount_eur }}</td>

@@ -31,7 +31,36 @@ python manage.py runserver
 - Upload a transaction CSV file and persist rows to a SQLite database.
 - Stores transaction metadata including category, partner, amount, currency, and exchange rate.
 - Includes a JSON endpoint for aggregated stats by month and category.
+- Includes a Vue + TypeScript dashboard scaffold for spending visualizations.
 - Future ML-based category prediction can use the stored transaction rows.
+
+## Frontend setup
+
+The frontend lives in the `frontend/` folder and is built with Vue 3, TypeScript, Vite, and ECharts.
+
+1. Install Node dependencies:
+
+```bash
+cd frontend
+npm install
+```
+
+2. Build the frontend assets:
+
+```bash
+npm run build
+```
+
+3. Run Django normally:
+
+```bash
+cd ..
+python manage.py runserver
+```
+
+4. Open the dashboard at `http://127.0.0.1:8000/dashboard/`.
+
+If you want to work on the frontend interactively, run `npm run dev` inside `frontend/` and use the Vite dev server.
 
 ## Notes
 
