@@ -1,7 +1,6 @@
 from decimal import Decimal
 from django.db import models
 
-
 class Transaction(models.Model):
     booking_date = models.DateField()
     value_date = models.DateField(blank=True, null=True)
@@ -13,7 +12,7 @@ class Transaction(models.Model):
     transaction_type = models.CharField(max_length=64, blank=True, verbose_name='Type')
     account_name = models.CharField(max_length=128, blank=True)
     original_amount = models.DecimalField(max_digits=12, decimal_places=2, blank=True, null=True)
-    original_currency = models.CharField(max_length=8, blank=True)
+    original_currency = models.CharField(max_length=8, blank=True, default='EUR')
     exchange_rate = models.DecimalField(max_digits=10, decimal_places=6, blank=True, null=True)
     imported_at = models.DateTimeField(auto_now_add=True)
 

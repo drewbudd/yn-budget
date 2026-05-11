@@ -5,6 +5,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from django.core.management.base import BaseCommand
+from budget.category_classifier import TransactionCategoryClassifier
 from budget.models import Transaction
 
 
@@ -45,18 +46,39 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         path = options['csv_path']
         created = 0
+        predicted = 0
+
+        classifier = TransactionCategoryClassifier()
+        has_model = classifier.train_from_db()
+
         with open(path, newline='', encoding='utf-8-sig') as csvfile:
             reader = csv.DictReader(csvfile)
             for row in reader:
                 booking_date = parse_date(row.get('Booking Date'))
                 if not booking_date:
                     continue
+
+                category = row.get('Category', '').strip() or None
+                amount_eur = parse_decimal(row.get('Amount (EUR)')) or Decimal('0.00')
+
+                if not category and has_model:
+                    prediction = classifier.predict(
+                        partner_name=row.get('Partner Name', '').strip(),
+                        payment_reference=row.get('Payment Reference', '').strip(),
+                        transaction_type=row.get('Type', '').strip(),
+                        original_currency=row.get('Original Currency', '').strip(),
+                        amount_eur=amount_eur,
+                    )
+                    if prediction:
+                        category = prediction.category
+                        predicted += 1
+
                 transaction = Transaction(
                     booking_date=booking_date,
                     value_date=parse_date(row.get('Value Date')),
                     partner_name=row.get('Partner Name', '').strip(),
-                    category=row.get('Category', '').strip() or None,
-                    amount_eur=parse_decimal(row.get('Amount (EUR)')) or Decimal('0.00'),
+                    category=category,
+                    amount_eur=amount_eur,
                     payment_reference=row.get('Payment Reference', '').strip(),
                     partner_iban=row.get('Partner Iban', '').strip(),
                     transaction_type=row.get('Type', '').strip(),
@@ -67,4 +89,9 @@ class Command(BaseCommand):
                 )
                 transaction.save()
                 created += 1
-        self.stdout.write(self.style.SUCCESS(f'Imported {created} transactions from {path}'))
+        model_msg = 'enabled' if has_model else 'disabled (not enough labeled data)'
+        self.stdout.write(
+            self.style.SUCCESS(
+                f'Imported {created} transactions from {path}. Predicted categories: {predicted}. Model: {model_msg}.'
+            )
+        )
