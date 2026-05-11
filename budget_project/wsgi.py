@@ -1,4 +1,4 @@
-""" WSGI config for deploying the Django project. """"
+""" WSGI config for deploying the Django project. """
 
 import os
 from django.core.wsgi import get_wsgi_application

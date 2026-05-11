@@ -19,6 +19,7 @@ from .models import Transaction
 
 
 PENDING_IMPORT_SESSION_KEY = 'pending_transaction_import_rows'
+AUTO_APPLY_MIN_CONFIDENCE = 0.45
 
 
 def parse_decimal(raw_value):
@@ -59,6 +60,8 @@ def _build_transaction_payload(row: dict[str, Any]) -> dict[str, Any] | None:
     amount_eur = parse_decimal(row.get('Amount (EUR)')) or Decimal('0.00')
     original_amount = parse_decimal(row.get('Original Amount'))
     exchange_rate = parse_decimal(row.get('Exchange Rate'))
+    transaction_type = row.get('Type', '').strip() or 'Presentment'
+    original_currency = row.get('Original Currency', '').strip() or 'EUR'
 
     return {
         'booking_date': booking_date.isoformat(),
@@ -68,21 +71,22 @@ def _build_transaction_payload(row: dict[str, Any]) -> dict[str, Any] | None:
         'amount_eur': str(amount_eur),
         'payment_reference': row.get('Payment Reference', '').strip(),
         'partner_iban': row.get('Partner Iban', '').strip(),
-        'transaction_type': row.get('Type', '').strip(),
+        'transaction_type': transaction_type,
         'account_name': row.get('Account Name', '').strip(),
         'original_amount': str(original_amount) if original_amount is not None else None,
-        'original_currency': row.get('Original Currency', '').strip(),
+        'original_currency': original_currency,
         'exchange_rate': str(exchange_rate) if exchange_rate is not None else None,
         'prediction_confidence': None,
         'was_predicted': False,
         'predicted_category': None,
+        'is_low_confidence_suggestion': False,
         'duplicate_in_db': False,
     }
 
 
 def _predict_missing_categories(payload_rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int, bool]:
     classifier = TransactionCategoryClassifier()
-    has_model = classifier.train_from_db()
+    has_model = classifier.load_or_train_from_db()
     predicted = 0
 
     if not has_model:
@@ -95,16 +99,22 @@ def _predict_missing_categories(payload_rows: list[dict[str, Any]]) -> tuple[lis
         prediction = classifier.predict(
             partner_name=payload['partner_name'],
             payment_reference=payload['payment_reference'],
-            partner_iban=payload['partner_iban'],
+            transaction_type=payload['transaction_type'],
             original_currency=payload['original_currency'],
             amount_eur=Decimal(payload['amount_eur']),
+            min_confidence=0.0,
         )
         if prediction:
-            payload['category'] = prediction.category
             payload['prediction_confidence'] = round(prediction.confidence, 4)
-            payload['was_predicted'] = True
             payload['predicted_category'] = prediction.category
-            predicted += 1
+            if prediction.confidence >= AUTO_APPLY_MIN_CONFIDENCE:
+                payload['category'] = prediction.category
+                payload['was_predicted'] = True
+                payload['is_low_confidence_suggestion'] = False
+                predicted += 1
+            else:
+                payload['was_predicted'] = False
+                payload['is_low_confidence_suggestion'] = True
 
     return payload_rows, predicted, has_model
 
@@ -246,6 +256,8 @@ def upload_csv(request):
 
                 if action == 'confirm_import':
                     created, skipped_duplicates = _save_payload_rows(pending_rows)
+                    if created:
+                        TransactionCategoryClassifier().refresh_from_db()
                     predicted = sum(1 for row in pending_rows if row.get('was_predicted'))
                     request.session.pop(PENDING_IMPORT_SESSION_KEY, None)
                     form = UploadCSVForm()

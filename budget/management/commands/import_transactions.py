@@ -66,8 +66,6 @@ class Command(BaseCommand):
                         partner_name=row.get('Partner Name', '').strip(),
                         payment_reference=row.get('Payment Reference', '').strip(),
                         transaction_type=row.get('Type', '').strip(),
-                        account_name=row.get('Account Name', '').strip(),
-                        partner_iban=row.get('Partner Iban', '').strip(),
                         original_currency=row.get('Original Currency', '').strip(),
                         amount_eur=amount_eur,
                     )

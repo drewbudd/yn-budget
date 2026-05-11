@@ -68,7 +68,15 @@
                         {% endfor %}
                     </select>
                 </td>
-                <td>{% if row.was_predicted %}Yes{% else %}No{% endif %}</td>
+                <td>
+                    {% if row.was_predicted %}
+                    Yes
+                    {% elif row.is_low_confidence_suggestion %}
+                    Suggested (low)
+                    {% else %}
+                    No
+                    {% endif %}
+                </td>
                 <td>{% if row.prediction_confidence %}{{ row.prediction_confidence }}{% else %}-{% endif %}</td>
                 <td>{% if row.duplicate_in_db %}Yes{% else %}No{% endif %}</td>
                 <td>{{ row.amount_eur }}</td>

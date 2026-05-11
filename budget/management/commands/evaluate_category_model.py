@@ -3,11 +3,12 @@ from __future__ import annotations
 import json
 from collections import Counter
 
+import pandas as pd
 from django.core.management.base import BaseCommand, CommandError
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix, f1_score, precision_recall_fscore_support
 from sklearn.model_selection import train_test_split
 
-from transactions.category_classifier import TransactionCategoryClassifier
+from budget.category_classifier import TransactionCategoryClassifier
 
 
 class Command(BaseCommand):
@@ -34,11 +35,11 @@ class Command(BaseCommand):
         random_state = options["random_state"]
 
         classifier = TransactionCategoryClassifier()
-        texts, labels = classifier.build_dataset_from_db()
+        features, labels = classifier.build_dataset_from_db()
 
-        if len(texts) < classifier.min_samples:
+        if len(features) < classifier.min_samples:
             raise CommandError(
-                f"Not enough labeled rows to evaluate. Found {len(texts)}, need at least {classifier.min_samples}."
+                f"Not enough labeled rows to evaluate. Found {len(features)}, need at least {classifier.min_samples}."
             )
 
         label_counts = Counter(labels)
@@ -55,7 +56,7 @@ class Command(BaseCommand):
             )
 
         x_train, x_test, y_train, y_test = train_test_split(
-            texts,
+            features,
             labels,
             test_size=test_size,
             random_state=random_state,
@@ -65,11 +66,14 @@ class Command(BaseCommand):
         if not x_train or not x_test:
             raise CommandError("Split produced an empty train or test set. Adjust --test-size.")
 
-        model = classifier.create_pipeline()
-        model.fit(x_train, y_train)
+        # Convert dicts to DataFrame for sklearn pipeline
+        x_train_df = pd.DataFrame(x_train)
+        x_test_df = pd.DataFrame(x_test)
 
-        y_pred = model.predict(x_test)
-        y_proba = model.predict_proba(x_test)
+        model = classifier.create_pipeline()
+        model.fit(x_train_df, y_train)
+        y_pred = model.predict(x_test_df)
+        y_proba = model.predict_proba(x_test_df)
         max_conf = y_proba.max(axis=1)
 
         accuracy = float(accuracy_score(y_test, y_pred))
@@ -81,7 +85,7 @@ class Command(BaseCommand):
         report_dict = classification_report(y_test, y_pred, output_dict=True, zero_division=0)
 
         self.stdout.write(self.style.SUCCESS("Model evaluation complete"))
-        self.stdout.write(f"Total labeled rows: {len(texts)}")
+        self.stdout.write(f"Total labeled rows: {len(features)}")
         self.stdout.write(f"Train rows: {len(x_train)} | Test rows: {len(x_test)}")
         self.stdout.write(f"Distinct categories: {len(label_counts)}")
         self.stdout.write(f"Accuracy: {accuracy:.4f}")
