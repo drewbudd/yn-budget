@@ -198,7 +198,6 @@ def upload_csv(request):
     predicted = 0
     preview_rows = []
     preview_total = 0
-    model_enabled = False
     duplicate_count = 0
     category_choices: list[str] = []
 
@@ -219,7 +218,7 @@ def upload_csv(request):
                         payload['row_id'] = index
                         payload_rows.append(payload)
 
-                payload_rows, predicted, model_enabled = _predict_missing_categories(payload_rows)
+                payload_rows, predicted, _ = _predict_missing_categories(payload_rows)
                 duplicate_count = _mark_duplicates(payload_rows)
 
                 request.session[PENDING_IMPORT_SESSION_KEY] = payload_rows
@@ -229,11 +228,13 @@ def upload_csv(request):
 
                 if preview_total == 0:
                     message = 'No valid transaction rows found in the CSV.'
+                    request.session.pop(PENDING_IMPORT_SESSION_KEY, None)
                 else:
                     message = 'Review duplicates and predicted categories. You can edit categories, delete rows, then confirm import.'
             else:
+                request.session.pop(PENDING_IMPORT_SESSION_KEY, None)
                 preview_rows = []
-        elif action == 'confirm_import' or action == 'update_preview' or action.startswith('delete_'):
+        elif action == 'confirm_import' or action.startswith('delete_'):
             pending_rows = request.session.get(PENDING_IMPORT_SESSION_KEY, [])
             if not pending_rows:
                 form = UploadCSVForm()
@@ -268,12 +269,9 @@ def upload_csv(request):
                     )
                 else:
                     form = UploadCSVForm()
-                    if action == 'update_preview':
-                        message = 'Preview updated. Category changes saved.'
                     preview_rows = pending_rows
                     preview_total = len(pending_rows)
                     predicted = sum(1 for row in pending_rows if row.get('was_predicted'))
-                    model_enabled = any(row.get('was_predicted') for row in pending_rows)
                     category_choices = _build_category_choices(preview_rows)
 
                 if action == 'confirm_import':
@@ -305,7 +303,6 @@ def upload_csv(request):
             'predicted': predicted,
             'preview_rows': preview_rows,
             'preview_total': preview_total,
-            'model_enabled': model_enabled,
             'duplicate_count': duplicate_count,
             'category_choices': category_choices,
             'recent_transactions': recent_transactions,

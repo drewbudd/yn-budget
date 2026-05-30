@@ -37,7 +37,7 @@
 {% if preview_total %}
 <h2>Import Preview</h2>
 <p>Total valid rows: {{ preview_total }}</p>
-<p>Predicted categories: {{ predicted }}{% if not model_enabled %} (model not enabled due to insufficient labeled history){% endif %}</p>
+<p>Predicted categories: {{ predicted }}{% if predicted == 0 %} (no prediction available due to insufficient labeled history or input already contains category){% endif %}</p>
 <p>Detected duplicates in DB: {{ duplicate_count }} (these will be ignored during import)</p>
 
 <form method="post">
@@ -86,7 +86,6 @@
         </tbody>
     </table>
     <p>
-        <button type="submit" name="action" value="update_preview">Save Category Changes</button>
         <button type="submit" name="action" value="confirm_import">Confirm Import</button>
     </p>
 </form>
