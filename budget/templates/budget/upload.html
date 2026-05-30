@@ -19,18 +19,76 @@
 </head>
 <body>
 <h1>Upload Transactions CSV</h1>
-<p>Upload the transaction export and store rows in the SQLite database. The Category column will be preserved for later ML prediction.</p>
+<p>Upload a transaction CSV, review predicted categories, then confirm import into SQLite.</p>
 {% if message %}
 <div class="message">{{ message }}</div>
 {% endif %}
 <form method="post" enctype="multipart/form-data">
     {% csrf_token %}
+    <input type="hidden" name="action" value="preview">
     <div class="field">{{ form.file.label_tag }} {{ form.file }}</div>
-    <button type="submit">Upload CSV</button>
+    <button type="submit">Preview Import</button>
 </form>
 
 {% if created %}
 <p>{{ created }} transaction rows imported.</p>
+{% endif %}
+
+{% if preview_total %}
+<h2>Import Preview</h2>
+<p>Total valid rows: {{ preview_total }}</p>
+<p>Predicted categories: {{ predicted }}{% if predicted == 0 %} (no prediction available due to insufficient labeled history or input already contains category){% endif %}</p>
+<p>Detected duplicates in DB: {{ duplicate_count }} (these will be ignored during import)</p>
+
+<form method="post">
+    {% csrf_token %}
+    <table>
+        <thead>
+            <tr>
+                <th>Date</th>
+                <th>Partner</th>
+                <th>Category</th>
+                <th>Predicted</th>
+                <th>Confidence</th>
+                <th>Duplicate in DB</th>
+                <th>Amount</th>
+                <th>Row Action</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in preview_rows %}
+            <tr>
+                <td>{{ row.booking_date }}</td>
+                <td>{{ row.partner_name }}</td>
+                <td>
+                    <select name="category_{{ row.row_id }}">
+                        <option value="">Uncategorized</option>
+                        {% for option in category_choices %}
+                        <option value="{{ option }}" {% if option == row.category %}selected{% endif %}>{{ option }}</option>
+                        {% endfor %}
+                    </select>
+                </td>
+                <td>
+                    {% if row.is_low_confidence_suggestion %}
+                    {{ row.predicted_category }}
+                    {% else %}
+                    
+                    {% endif %}
+                </td>
+                <td>{% if row.prediction_confidence %}{{ row.prediction_confidence }}{% else %}-{% endif %}</td>
+                <td>{% if row.duplicate_in_db %}Yes{% else %}No{% endif %}</td>
+                <td>{{ row.amount_eur }}</td>
+                <td>
+                    <button type="submit" name="action" value="delete_{{ row.row_id }}">Delete</button>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    <p>
+        <button type="submit" name="action" value="confirm_import">Confirm Import</button>
+    </p>
+</form>
 {% endif %}
 
 {% if recent_transactions %}
