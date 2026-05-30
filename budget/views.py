@@ -19,7 +19,7 @@ from .models import Transaction
 
 
 PENDING_IMPORT_SESSION_KEY = 'pending_transaction_import_rows'
-AUTO_APPLY_MIN_CONFIDENCE = 0.45
+AUTO_APPLY_MIN_CONFIDENCE = 0.25
 
 
 def parse_decimal(raw_value):

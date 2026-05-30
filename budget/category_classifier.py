@@ -12,6 +12,7 @@ import joblib
 import pandas as pd
 from django.conf import settings
 from django.db.models import Count, Max
+from nltk.stem import SnowballStemmer
 from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -19,6 +20,68 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
 from .models import Transaction
+
+
+_EN_STEMMER = SnowballStemmer("english")
+_DE_STEMMER = SnowballStemmer("german")
+_REFERENCE_PLACEHOLDER_VALUES = {"", "none", "na", "n/a", "null", "nan", "unknown"}
+
+
+def _unicode_alnum_tokens(text: str) -> list[str]:
+    """Split text into alphanumeric Unicode tokens (keeps umlauts and ß)."""
+    tokens: list[str] = []
+    current: list[str] = []
+    for char in text:
+        if char.isalnum():
+            current.append(char)
+        elif current:
+            tokens.append("".join(current))
+            current.clear()
+    if current:
+        tokens.append("".join(current))
+    return tokens
+
+
+def nlp_tokenizer(text: str) -> list[str]:
+    """Build bilingual NLP tokens for mixed German/English merchant text."""
+    normalized = (text or "").casefold()
+    base_tokens = _unicode_alnum_tokens(normalized)
+
+    output_tokens: list[str] = []
+    for token in base_tokens:
+        if len(token) < 2:
+            continue
+
+        output_tokens.append(token)
+
+        en_stem = _EN_STEMMER.stem(token)
+        de_stem = _DE_STEMMER.stem(token)
+
+        if en_stem and en_stem != token:
+            output_tokens.append(f"en:{en_stem}")
+        if de_stem and de_stem != token:
+            output_tokens.append(f"de:{de_stem}")
+
+    return output_tokens
+
+
+def normalize_reference_text(text: str | None) -> str:
+    normalized = (text or "").strip()
+    lowered = normalized.lower()
+    if lowered in _REFERENCE_PLACEHOLDER_VALUES:
+        return "none"
+    return normalized or "none"
+
+
+def is_informative_reference(text: str | None) -> bool:
+    normalized = normalize_reference_text(text)
+    if normalized == "none":
+        return False
+    tokens = nlp_tokenizer(normalized)
+    if not tokens:
+        return False
+    has_alpha = any(any(char.isalpha() for char in token) for token in tokens)
+    return has_alpha and len(normalized) >= 4
 
 
 @dataclass
@@ -32,18 +95,23 @@ class TransactionCategoryClassifier:
     Train on labeled transactions and predict missing categories using structured feature engineering.
     
     Features:
-    - partner_name: TF-IDF text features with explicit higher transformer weight
+    - partner_name: word + character TF-IDF text features with explicit higher transformer weight
     - amount_eur: scaled numeric feature
     - transaction_type: one-hot encoded categorical
     - original_currency: one-hot encoded categorical
-    - payment_reference: TF-IDF text features
+    - payment_reference: word + character TF-IDF text features
     """
 
     MODEL_CACHE_DIRNAME = ".cache"
     MODEL_CACHE_FILENAME = "transaction_category_model.joblib"
     PARTNER_NAME_WEIGHT = 3.0
 
-    def __init__(self, min_samples: int = 20, min_classes: int = 2):
+    def __init__(
+        self,
+        min_samples: int = 20,
+        min_classes: int = 2,
+    ):
+
         self.min_samples = min_samples
         self.min_classes = min_classes
         self._model: Pipeline | None = None
@@ -64,6 +132,7 @@ class TransactionCategoryClassifier:
             "partner_name_weight": cls.PARTNER_NAME_WEIGHT,
             "create_pipeline_source": inspect.getsource(cls.create_pipeline),
             "build_training_rows_source": inspect.getsource(cls._build_training_rows),
+            "nlp_tokenizer_source": inspect.getsource(nlp_tokenizer),
         }
         serialized = json.dumps(signature_parts, sort_keys=True).encode("utf-8")
         return hashlib.sha256(serialized).hexdigest()
@@ -150,7 +219,11 @@ class TransactionCategoryClassifier:
             features.append(
                 {
                     "partner_name": (row.partner_name or "").strip() or "unknown",
-                    "payment_reference": (row.payment_reference or "").strip() or "none",
+                    "payment_reference_informative": (
+                        normalize_reference_text(row.payment_reference)
+                        if is_informative_reference(row.payment_reference)
+                        else "none"
+                    ),
                     "amount_eur": float(row.amount_eur),
                     "transaction_type": (row.transaction_type or "").strip() or "unknown",
                     "original_currency": (row.original_currency or "EUR").strip() or "EUR",
@@ -164,39 +237,63 @@ class TransactionCategoryClassifier:
         """Return feature dicts and labels from currently labeled DB rows."""
         return self._build_training_rows()
 
-    @staticmethod
-    def create_pipeline() -> Pipeline:
+    def create_pipeline(self) -> Pipeline:
         """Create preprocessing + classification pipeline for structured features."""
+        word_text_vectorizer = TfidfVectorizer(
+            tokenizer=nlp_tokenizer,
+            token_pattern=None,
+            lowercase=False,
+            strip_accents="unicode",
+            ngram_range=(1, 3),
+            sublinear_tf=True,
+        )
+        char_text_vectorizer = TfidfVectorizer(
+            analyzer="char_wb",
+            lowercase=True,
+            strip_accents="unicode",
+            ngram_range=(3, 5),
+            sublinear_tf=True,
+        )
+
+        transformers = [
+            ("partner_word_tfidf", word_text_vectorizer, "partner_name"),
+            ("partner_char_tfidf", char_text_vectorizer, "partner_name"),
+            (
+                "reference_word_tfidf",
+                TfidfVectorizer(
+                    tokenizer=nlp_tokenizer,
+                    token_pattern=None,
+                    lowercase=False,
+                    strip_accents="unicode",
+                    ngram_range=(1, 3),
+                    sublinear_tf=True,
+                ),
+                "payment_reference_informative",
+            ),
+            (
+                "reference_char_tfidf",
+                TfidfVectorizer(
+                    analyzer="char_wb",
+                    lowercase=True,
+                    strip_accents="unicode",
+                    ngram_range=(3, 5),
+                    sublinear_tf=True,
+                ),
+                "payment_reference_informative",
+            ),
+            ("amount_scale", StandardScaler(), ["amount_eur"]),
+            ("type_onehot", OneHotEncoder(handle_unknown="ignore", sparse_output=False), ["transaction_type"]),
+            ("currency_onehot", OneHotEncoder(handle_unknown="ignore", sparse_output=False), ["original_currency"]),
+        ]
+        transformer_weights = {
+            "partner_word_tfidf": self.PARTNER_NAME_WEIGHT,
+            "partner_char_tfidf": self.PARTNER_NAME_WEIGHT,
+        }
+
         preprocessor = ColumnTransformer(
-            transformers=[
-                (
-                    "partner_tfidf",
-                    TfidfVectorizer(max_features=100, ngram_range=(1, 4), lowercase=True),
-                    "partner_name",
-                ),
-                (
-                    "reference_tfidf",
-                    TfidfVectorizer(max_features=50, ngram_range=(1, 3), lowercase=True),
-                    "payment_reference",
-                ),
-                (
-                    "amount_scale",
-                    StandardScaler(),
-                    ["amount_eur"],
-                ),
-                (
-                    "type_onehot",
-                    OneHotEncoder(handle_unknown="ignore", sparse_output=False),
-                    ["transaction_type"],
-                ),
-                (
-                    "currency_onehot",
-                    OneHotEncoder(handle_unknown="ignore", sparse_output=False),
-                    ["original_currency"],
-                ),
-            ],
+            transformers=transformers,
             remainder="drop",
-            transformer_weights={"partner_tfidf": TransactionCategoryClassifier.PARTNER_NAME_WEIGHT},
+            transformer_weights=transformer_weights,
         )
 
         return Pipeline(
@@ -269,7 +366,11 @@ class TransactionCategoryClassifier:
 
         feature_dict = {
             "partner_name": (partner_name or "").strip() or "unknown",
-            "payment_reference": (payment_reference or "").strip() or "none",
+            "payment_reference_informative": (
+                normalize_reference_text(payment_reference)
+                if is_informative_reference(payment_reference)
+                else "none"
+            ),
             "amount_eur": amount,
             "transaction_type": (transaction_type or "").strip() or "unknown",
             "original_currency": (original_currency or "EUR").strip() or "EUR",

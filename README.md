@@ -39,30 +39,35 @@ python manage.py runserver
 - Prediction is only enabled when enough labeled training rows already exist in the database.
 - The app is lightweight and ready to be extended with visualization endpoints and frontend pages.
 
-## Model Evaluation
+## Optional CLI Import
 
-Run the dedicated evaluation command:
-
-```bash
-python manage.py evaluate_category_model
-```
-
-Useful options:
+If you want to import a CSV via terminal (instead of the upload page), use:
 
 ```bash
-python manage.py evaluate_category_model --test-size 0.2 --random-state 42 --thresholds 0.30,0.45,0.60
-python manage.py evaluate_category_model --output-json model_eval_report.json
+python manage.py import_transactions /path/to/transactions.csv
 ```
 
-This command does a train/test split from labeled transactions in the DB and prints:
+This command imports rows and predicts missing categories when a trained model is available.
 
-- Accuracy, macro F1, weighted F1
-- Per-class precision/recall/F1 report
-- Confusion matrix
-- Coverage vs quality by confidence threshold
+## Model Evaluation Notebook
 
-For visual analysis, open:
+Use `model_evaluation.ipynb` to evaluate the transaction category model in `budget/category_classifier.py`.
 
-- `model_evaluation.ipynb`
+What the notebook does:
 
-The notebook plots confusion matrix and threshold tradeoffs interactively.
+- Loads labeled transactions from the SQLite database.
+- Trains the same scikit-learn pipeline used by the app.
+- Evaluates with a train/test split.
+- Shows classification metrics, a confusion matrix, and confidence-threshold analysis.
+
+How to run:
+
+1. Make sure migrations are applied and the database has labeled transactions.
+2. Activate your virtual environment.
+3. Open `model_evaluation.ipynb` in VS Code (or Jupyter) and run all cells.
+
+If needed, install notebook tooling:
+
+```bash
+pip install notebook
+```

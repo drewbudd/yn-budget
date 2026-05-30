@@ -69,12 +69,10 @@
                     </select>
                 </td>
                 <td>
-                    {% if row.was_predicted %}
-                    Yes
-                    {% elif row.is_low_confidence_suggestion %}
-                    Suggested (low)
+                    {% if row.is_low_confidence_suggestion %}
+                    {{ row.predicted_category }}
                     {% else %}
-                    No
+                    
                     {% endif %}
                 </td>
                 <td>{% if row.prediction_confidence %}{{ row.prediction_confidence }}{% else %}-{% endif %}</td>
