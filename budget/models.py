@@ -35,3 +35,19 @@ class Transaction(models.Model):
             return Decimal(value)
         except Exception:
             return None
+
+
+class Budget(models.Model):
+    year = models.IntegerField()
+    month = models.IntegerField()
+    category = models.CharField(max_length=128)
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ('year', 'month', 'category')
+        ordering = ['-year', '-month', 'category']
+
+    def __str__(self):
+        return f'{self.year}-{self.month:02d} {self.category}: {self.amount}'

@@ -12,10 +12,12 @@ from django.db.models.functions import ExtractMonth, ExtractYear
 from django.http import HttpResponseBadRequest, JsonResponse
 from django.shortcuts import render
 from django.urls import reverse
+from django.views.decorators.csrf import ensure_csrf_cookie
+from django.views.decorators.http import require_http_methods
 
 from .category_classifier import TransactionCategoryClassifier
 from .forms import UploadCSVForm
-from .models import Transaction
+from .models import Transaction, Budget
 
 
 PENDING_IMPORT_SESSION_KEY = 'pending_transaction_import_rows'
@@ -541,3 +543,90 @@ def category_trend(request):
             for item in monthly
         ],
     })
+
+
+@ensure_csrf_cookie
+@require_http_methods(["GET", "POST"])
+def budget_list_create(request):
+    import json
+    from django.db import transaction as db_transaction
+
+    if request.method == 'GET':
+        year_str = request.GET.get('year')
+        month_str = request.GET.get('month')
+        if not year_str or not month_str:
+            now = datetime.now()
+            year = now.year
+            month = now.month
+        else:
+            try:
+                year = int(year_str)
+                month = int(month_str)
+            except ValueError:
+                return HttpResponseBadRequest('Invalid year or month')
+
+        expense_categories = Transaction.objects.filter(amount_eur__lt=0).exclude(category__iexact='Savings').values_list('category', flat=True).distinct()
+        expense_categories = [c for c in expense_categories if c]
+
+        budgeted_categories = Budget.objects.filter(year=year, month=month).values_list('category', flat=True).distinct()
+        all_categories = sorted(list(set(list(expense_categories) + list(budgeted_categories))))
+
+        actuals = (
+            Transaction.objects.filter(
+                value_date__year=year,
+                value_date__month=month,
+                amount_eur__lt=0
+            )
+            .exclude(category__iexact='Savings')
+            .values('category')
+            .annotate(total_spent=Sum('amount_eur'))
+        )
+        actual_map = {item['category']: abs(item['total_spent']) for item in actuals if item['category']}
+
+        budgets = Budget.objects.filter(year=year, month=month)
+        budget_map = {b.category: b.amount for b in budgets}
+
+        category_budgets = []
+        for cat in all_categories:
+            category_budgets.append({
+                'category': cat,
+                'budget': float(budget_map.get(cat, 0)),
+                'actual': float(actual_map.get(cat, 0)),
+            })
+
+        return JsonResponse({
+            'year': year,
+            'month': month,
+            'budgets': category_budgets,
+        })
+
+    elif request.method == 'POST':
+        try:
+            data = json.loads(request.body)
+            year = int(data.get('year'))
+            month = int(data.get('month'))
+            budgets_input = data.get('budgets', {})
+        except (ValueError, TypeError, json.JSONDecodeError):
+            return HttpResponseBadRequest('Invalid JSON data')
+
+        with db_transaction.atomic():
+            for category, amount_val in budgets_input.items():
+                if amount_val is None or str(amount_val).strip() == '':
+                    amount_dec = Decimal('0.00')
+                else:
+                    try:
+                        amount_dec = Decimal(str(amount_val))
+                    except (ValueError, TypeError):
+                        continue
+
+                if amount_dec > 0:
+                    Budget.objects.update_or_create(
+                        year=year,
+                        month=month,
+                        category=category,
+                        defaults={'amount': amount_dec}
+                    )
+                else:
+                    Budget.objects.filter(year=year, month=month, category=category).delete()
+
+        return JsonResponse({'status': 'success'})
