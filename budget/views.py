@@ -194,124 +194,106 @@ def _build_category_choices(payload_rows: list[dict[str, Any]]) -> list[str]:
     return sorted(options)
 
 
-def upload_csv(request):
-    message = None
-    created = 0
-    predicted = 0
-    preview_rows = []
-    preview_total = 0
-    duplicate_count = 0
-    category_choices: list[str] = []
+@require_http_methods(["POST"])
+def api_preview_import(request):
+    if 'file' not in request.FILES:
+        return HttpResponseBadRequest('No file provided')
+    
+    csv_file = request.FILES['file']
+    try:
+        decoded_file = io.TextIOWrapper(csv_file.file, encoding='utf-8-sig')
+        reader = csv.DictReader(decoded_file)
+        payload_rows = []
+        for index, row in enumerate(reader, start=1):
+            payload = _build_transaction_payload(row)
+            if payload:
+                payload['row_id'] = index
+                payload_rows.append(payload)
+    except Exception as e:
+        return HttpResponseBadRequest(f'Failed to parse CSV file: {str(e)}')
 
-    if request.method == 'POST':
-        action = request.POST.get('action', 'preview')
+    payload_rows, predicted_count, _ = _predict_missing_categories(payload_rows)
+    duplicate_count = _mark_duplicates(payload_rows)
+    category_choices = _build_category_choices(payload_rows)
 
-        if action == 'preview':
-            form = UploadCSVForm(request.POST, request.FILES)
-            if form.is_valid():
-                csv_file = form.cleaned_data['file']
-                decoded_file = io.TextIOWrapper(csv_file.file, encoding='utf-8-sig')
-                reader = csv.DictReader(decoded_file)
+    return JsonResponse({
+        'preview_rows': payload_rows,
+        'category_choices': category_choices,
+        'duplicate_count': duplicate_count,
+        'predicted_count': predicted_count,
+        'total_count': len(payload_rows)
+    })
 
-                payload_rows = []
-                for index, row in enumerate(reader, start=1):
-                    payload = _build_transaction_payload(row)
-                    if payload:
-                        payload['row_id'] = index
-                        payload_rows.append(payload)
 
-                payload_rows, predicted, _ = _predict_missing_categories(payload_rows)
-                duplicate_count = _mark_duplicates(payload_rows)
+@require_http_methods(["POST"])
+def api_confirm_import(request):
+    import json
+    from django.db import transaction as db_transaction
+    
+    try:
+        data = json.loads(request.body)
+        transactions_data = data.get('transactions', [])
+    except (json.JSONDecodeError, TypeError):
+        return HttpResponseBadRequest('Invalid JSON body')
 
-                request.session[PENDING_IMPORT_SESSION_KEY] = payload_rows
-                preview_rows = payload_rows
-                preview_total = len(payload_rows)
-                category_choices = _build_category_choices(preview_rows)
+    created_count = 0
+    skipped_count = 0
 
-                if preview_total == 0:
-                    message = 'No valid transaction rows found in the CSV.'
-                    request.session.pop(PENDING_IMPORT_SESSION_KEY, None)
-                else:
-                    message = 'Review duplicates and predicted categories. You can edit categories, delete rows, then confirm import.'
-            else:
-                request.session.pop(PENDING_IMPORT_SESSION_KEY, None)
-                preview_rows = []
-        elif action == 'confirm_import' or action.startswith('delete_'):
-            pending_rows = request.session.get(PENDING_IMPORT_SESSION_KEY, [])
-            if not pending_rows:
-                form = UploadCSVForm()
-                message = 'No pending preview found. Please upload a CSV first.'
-            else:
-                _apply_preview_category_updates(request.POST, pending_rows)
+    with db_transaction.atomic():
+        for payload in transactions_data:
+            # Re-verify duplicates to prevent race conditions/double imports
+            is_dup = Transaction.objects.filter(
+                booking_date=parse_date(payload.get('booking_date')),
+                value_date=parse_date(payload.get('value_date')),
+                partner_name=payload.get('partner_name', '').strip(),
+                amount_eur=Decimal(payload.get('amount_eur', '0.00')),
+            ).exists()
 
-                if action.startswith('delete_'):
-                    row_id_text = action.replace('delete_', '', 1)
-                    try:
-                        row_id = int(row_id_text)
-                    except ValueError:
-                        row_id = None
-                    if row_id is not None:
-                        pending_rows = [row for row in pending_rows if row.get('row_id') != row_id]
-                    message = 'Row deleted from preview.'
+            if is_dup:
+                skipped_count += 1
+                continue
 
-                duplicate_count = _mark_duplicates(pending_rows)
-                request.session[PENDING_IMPORT_SESSION_KEY] = pending_rows
+            transaction = Transaction(
+                booking_date=parse_date(payload.get('booking_date')),
+                value_date=parse_date(payload.get('value_date')),
+                partner_name=payload.get('partner_name', '').strip(),
+                category=payload.get('category', '') or None,
+                amount_eur=Decimal(payload.get('amount_eur', '0.00')),
+                payment_reference=payload.get('payment_reference', '').strip(),
+                partner_iban=payload.get('partner_iban', '').strip(),
+                transaction_type=payload.get('transaction_type', '').strip(),
+                account_name=payload.get('account_name', '').strip(),
+                original_amount=Decimal(payload.get('original_amount')) if payload.get('original_amount') else None,
+                original_currency=payload.get('original_currency', '').strip(),
+                exchange_rate=Decimal(payload.get('exchange_rate')) if payload.get('exchange_rate') else None,
+            )
+            transaction.save()
+            created_count += 1
 
-                if action == 'confirm_import':
-                    created, skipped_duplicates = _save_payload_rows(pending_rows)
-                    if created:
-                        TransactionCategoryClassifier().refresh_from_db()
-                    predicted = sum(1 for row in pending_rows if row.get('was_predicted'))
-                    request.session.pop(PENDING_IMPORT_SESSION_KEY, None)
-                    form = UploadCSVForm()
-                    message = (
-                        f'{created} transactions imported successfully. '
-                        f'Predicted categories: {predicted}. '
-                        f'Duplicates ignored: {skipped_duplicates}.'
-                    )
-                else:
-                    form = UploadCSVForm()
-                    preview_rows = pending_rows
-                    preview_total = len(pending_rows)
-                    predicted = sum(1 for row in pending_rows if row.get('was_predicted'))
-                    category_choices = _build_category_choices(preview_rows)
+    if created_count > 0:
+        TransactionCategoryClassifier().refresh_from_db()
 
-                if action == 'confirm_import':
-                    preview_rows = []
-                    preview_total = 0
-                    duplicate_count = 0
-                    category_choices = []
-                else:
-                    preview_rows = pending_rows
-                    preview_total = len(preview_rows)
-                    category_choices = _build_category_choices(preview_rows)
-        else:
-            form = UploadCSVForm()
-            message = 'Unknown action. Please upload the CSV again.'
-    else:
-        form = UploadCSVForm()
+    return JsonResponse({
+        'status': 'success',
+        'created_count': created_count,
+        'skipped_count': skipped_count
+    })
 
-    if request.method != 'POST':
-        request.session.pop(PENDING_IMPORT_SESSION_KEY, None)
 
-    recent_transactions = Transaction.objects.order_by('-booking_date')[:10]
-    return render(
-        request,
-        'budget/upload.html',
-        {
-            'form': form,
-            'message': message,
-            'created': created,
-            'predicted': predicted,
-            'preview_rows': preview_rows,
-            'preview_total': preview_total,
-            'duplicate_count': duplicate_count,
-            'category_choices': category_choices,
-            'recent_transactions': recent_transactions,
-            'stats_url': reverse('transaction_stats'),
-            'dashboard_url': reverse('dashboard'),
-        },
-    )
+@require_http_methods(["GET"])
+def api_recent_transactions(request):
+    recent = Transaction.objects.order_by('-booking_date')[:10]
+    data = []
+    for t in recent:
+        data.append({
+            'booking_date': t.booking_date.isoformat(),
+            'value_date': t.value_date.isoformat() if t.value_date else None,
+            'partner_name': t.partner_name,
+            'category': t.category or 'Uncategorized',
+            'amount_eur': str(t.amount_eur),
+            'transaction_type': t.transaction_type,
+        })
+    return JsonResponse({'recent_transactions': data})
 
 
 def dashboard(request):
