@@ -7,7 +7,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
-from django.db.models import Case, DecimalField, Sum, Value, When
+from django.db.models import Case, DecimalField, Q, Sum, Value, When
 from django.db.models.functions import ExtractMonth, ExtractYear
 from django.http import HttpResponseBadRequest, JsonResponse
 from django.shortcuts import render
@@ -292,8 +292,137 @@ def api_recent_transactions(request):
             'category': t.category or 'Uncategorized',
             'amount_eur': str(t.amount_eur),
             'transaction_type': t.transaction_type,
+            'is_flagged': t.is_flagged,
         })
     return JsonResponse({'recent_transactions': data})
+
+
+@require_http_methods(["GET"])
+def api_transactions_list(request):
+    year_str = request.GET.get('year')
+    month_str = request.GET.get('month')
+    if not year_str or not month_str:
+        now = datetime.now()
+        year = now.year
+        month = now.month
+    else:
+        try:
+            year = int(year_str)
+            month = int(month_str)
+        except ValueError:
+            return HttpResponseBadRequest('Invalid year or month')
+    
+    show_flagged = request.GET.get('show_flagged') == 'true'
+    search_query = request.GET.get('search', '').strip()
+
+    queryset = Transaction.objects.filter(value_date__year=year, value_date__month=month)
+    
+    if show_flagged:
+        queryset = queryset.filter(is_flagged=True)
+    
+    if search_query:
+        queryset = queryset.filter(
+            Q(partner_name__icontains=search_query) |
+            Q(payment_reference__icontains=search_query) |
+            Q(category__icontains=search_query)
+        )
+
+    transactions = []
+    for t in queryset:
+        transactions.append({
+            'id': t.id,
+            'booking_date': t.booking_date.isoformat(),
+            'value_date': t.value_date.isoformat() if t.value_date else None,
+            'partner_name': t.partner_name,
+            'category': t.category or 'Uncategorized',
+            'amount_eur': str(t.amount_eur),
+            'payment_reference': t.payment_reference,
+            'partner_iban': t.partner_iban,
+            'transaction_type': t.transaction_type,
+            'account_name': t.account_name,
+            'is_flagged': t.is_flagged,
+        })
+    
+    db_categories = (
+        Transaction.objects.exclude(category__isnull=True)
+        .exclude(category='')
+        .order_by('category')
+        .values_list('category', flat=True)
+        .distinct()
+    )
+
+    return JsonResponse({
+        'year': year,
+        'month': month,
+        'transactions': transactions,
+        'category_choices': list(db_categories),
+    })
+
+
+@require_http_methods(["POST"])
+def api_transaction_update(request, id):
+    import json
+    try:
+        transaction = Transaction.objects.get(id=id)
+    except Transaction.DoesNotExist:
+        return JsonResponse({'status': 'error', 'message': 'Transaction not found'}, status=404)
+
+    try:
+        data = json.loads(request.body)
+        
+        if 'booking_date' in data:
+            b_date = parse_date(data['booking_date'])
+            if b_date:
+                transaction.booking_date = b_date
+                if not transaction.value_date or transaction.value_date == transaction.booking_date:
+                    transaction.value_date = b_date
+        
+        if 'value_date' in data:
+            v_date = parse_date(data['value_date'])
+            if v_date:
+                transaction.value_date = v_date
+
+        if 'category' in data:
+            category_val = data['category']
+            if category_val is not None:
+                category_val = str(category_val).strip()
+            transaction.category = category_val or None
+
+        if 'amount_eur' in data:
+            try:
+                transaction.amount_eur = Decimal(str(data['amount_eur']))
+            except (ValueError, TypeError):
+                return HttpResponseBadRequest('Invalid amount format')
+
+        if 'is_flagged' in data:
+            transaction.is_flagged = bool(data['is_flagged'])
+
+        transaction.save()
+
+        TransactionCategoryClassifier().refresh_from_db()
+
+        return JsonResponse({'status': 'success', 'transaction': {
+            'id': transaction.id,
+            'booking_date': transaction.booking_date.isoformat(),
+            'value_date': transaction.value_date.isoformat() if transaction.value_date else None,
+            'partner_name': transaction.partner_name,
+            'category': transaction.category or 'Uncategorized',
+            'amount_eur': str(transaction.amount_eur),
+            'is_flagged': transaction.is_flagged,
+        }})
+    except (json.JSONDecodeError, TypeError):
+        return HttpResponseBadRequest('Invalid JSON body')
+
+
+@require_http_methods(["POST"])
+def api_transaction_delete(request, id):
+    try:
+        transaction = Transaction.objects.get(id=id)
+        transaction.delete()
+        TransactionCategoryClassifier().refresh_from_db()
+        return JsonResponse({'status': 'success'})
+    except Transaction.DoesNotExist:
+        return JsonResponse({'status': 'error', 'message': 'Transaction not found'}, status=404)
 
 
 def dashboard(request):

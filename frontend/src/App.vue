@@ -30,6 +30,14 @@
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="tab-icon"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
           Import
         </button>
+        <button 
+          @click="currentTab = 'transactions'" 
+          class="tab-btn" 
+          :class="{ active: currentTab === 'transactions' }"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="tab-icon"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+          Transactions
+        </button>
       </nav>
     </header>
     <main class="main-content">
@@ -45,19 +53,22 @@ import { ref, computed } from 'vue'
 import SpendingDashboard from './components/SpendingDashboard.vue'
 import BudgetManager from './components/BudgetManager.vue'
 import TransactionImporter from './components/TransactionImporter.vue'
+import TransactionManager from './components/TransactionManager.vue'
 
 export default {
   components: {
     SpendingDashboard,
     BudgetManager,
     TransactionImporter,
+    TransactionManager,
   },
   setup() {
     const currentTab = ref('dashboard')
     const currentTabComponent = computed(() => {
       if (currentTab.value === 'dashboard') return 'SpendingDashboard'
       if (currentTab.value === 'budgets') return 'BudgetManager'
-      return 'TransactionImporter'
+      if (currentTab.value === 'import') return 'TransactionImporter'
+      return 'TransactionManager'
     })
     return {
       currentTab,

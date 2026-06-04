@@ -15,6 +15,7 @@ class Transaction(models.Model):
     original_currency = models.CharField(max_length=8, blank=True, default='EUR')
     exchange_rate = models.DecimalField(max_digits=10, decimal_places=6, blank=True, null=True)
     imported_at = models.DateTimeField(auto_now_add=True)
+    is_flagged = models.BooleanField(default=False)
 
     class Meta:
         ordering = ['-value_date', '-booking_date', '-id']
