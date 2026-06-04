@@ -6,7 +6,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('transactions', '0001_initial'),
+        ('budget', '0002_alter_transaction_to_include_choice'),
     ]
 
     operations = [
