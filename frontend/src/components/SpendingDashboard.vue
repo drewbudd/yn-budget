@@ -380,7 +380,8 @@ export default {
 
     const buildMonthlyChart = () => {
       if (!monthlyChart.value || sortedMonthly.value.length === 0) return
-      const chart = echarts.init(monthlyChart.value)
+      const existing = echarts.getInstanceByDom(monthlyChart.value)
+      const chart = existing ?? echarts.init(monthlyChart.value)
 
       let periodData
       if (period.value === 'year' && selectedYear.value) {

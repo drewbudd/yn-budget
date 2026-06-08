@@ -11,12 +11,10 @@ from django.db.models import Case, DecimalField, Q, Sum, Value, When
 from django.db.models.functions import ExtractMonth, ExtractYear
 from django.http import HttpResponseBadRequest, JsonResponse
 from django.shortcuts import render
-from django.urls import reverse
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_http_methods
 
 from .category_classifier import TransactionCategoryClassifier
-from .forms import UploadCSVForm
 from .models import Transaction, Budget
 
 
@@ -209,8 +207,8 @@ def api_preview_import(request):
             if payload:
                 payload['row_id'] = index
                 payload_rows.append(payload)
-    except Exception as e:
-        return HttpResponseBadRequest(f'Failed to parse CSV file: {str(e)}')
+    except Exception:
+        return HttpResponseBadRequest('Failed to parse CSV file')
 
     payload_rows, predicted_count, _ = _predict_missing_categories(payload_rows)
     duplicate_count = _mark_duplicates(payload_rows)
@@ -241,12 +239,19 @@ def api_confirm_import(request):
 
     with db_transaction.atomic():
         for payload in transactions_data:
+            booking_date = parse_date(payload.get('booking_date'))
+            if not booking_date:
+                continue
+            value_date = parse_date(payload.get('value_date')) or booking_date
+            partner_name = payload.get('partner_name', '').strip()
+            amount_eur = Decimal(payload.get('amount_eur', '0.00'))
+
             # Re-verify duplicates to prevent race conditions/double imports
             is_dup = Transaction.objects.filter(
-                booking_date=parse_date(payload.get('booking_date')),
-                value_date=parse_date(payload.get('value_date')),
-                partner_name=payload.get('partner_name', '').strip(),
-                amount_eur=Decimal(payload.get('amount_eur', '0.00')),
+                booking_date=booking_date,
+                value_date=value_date,
+                partner_name=partner_name,
+                amount_eur=amount_eur,
             ).exists()
 
             if is_dup:
@@ -254,11 +259,11 @@ def api_confirm_import(request):
                 continue
 
             transaction = Transaction(
-                booking_date=parse_date(payload.get('booking_date')),
-                value_date=parse_date(payload.get('value_date')),
-                partner_name=payload.get('partner_name', '').strip(),
+                booking_date=booking_date,
+                value_date=value_date,
+                partner_name=partner_name,
                 category=payload.get('category', '') or None,
-                amount_eur=Decimal(payload.get('amount_eur', '0.00')),
+                amount_eur=amount_eur,
                 payment_reference=payload.get('payment_reference', '').strip(),
                 partner_iban=payload.get('partner_iban', '').strip(),
                 transaction_type=payload.get('transaction_type', '').strip(),
@@ -425,6 +430,7 @@ def api_transaction_delete(request, id):
         return JsonResponse({'status': 'error', 'message': 'Transaction not found'}, status=404)
 
 
+@ensure_csrf_cookie
 def dashboard(request):
     return render(request, 'budget/dashboard.html')
 
@@ -481,6 +487,7 @@ def transaction_stats(request):
     })
 
 
+@require_http_methods(["GET"])
 def category_totals(request):
     period = request.GET.get('period', 'year')
     year = request.GET.get('year')
@@ -565,6 +572,7 @@ def category_totals(request):
     })
 
 
+@require_http_methods(["GET"])
 def category_trend(request):
     category = request.GET.get('category')
     if not category:
