@@ -15,12 +15,14 @@ class Transaction(models.Model):
     original_currency = models.CharField(max_length=8, blank=True, default='EUR')
     exchange_rate = models.DecimalField(max_digits=10, decimal_places=6, blank=True, null=True)
     imported_at = models.DateTimeField(auto_now_add=True)
+    is_flagged = models.BooleanField(default=False)
 
     class Meta:
-        ordering = ['-booking_date', '-id']
+        ordering = ['-value_date', '-booking_date', '-id']
 
     def __str__(self):
-        return f'{self.booking_date} {self.partner_name or "Unknown"} {self.amount_eur}'
+        date_value = self.value_date or self.booking_date
+        return f'{date_value} {self.partner_name or "Unknown"} {self.amount_eur}'
 
     @staticmethod
     def parse_decimal(value):
@@ -34,3 +36,19 @@ class Transaction(models.Model):
             return Decimal(value)
         except Exception:
             return None
+
+
+class Budget(models.Model):
+    year = models.IntegerField()
+    month = models.IntegerField()
+    category = models.CharField(max_length=128)
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ('year', 'month', 'category')
+        ordering = ['-year', '-month', 'category']
+
+    def __str__(self):
+        return f'{self.year}-{self.month:02d} {self.category}: {self.amount}'
