@@ -3,3 +3,5 @@ scikit-learn>=1.4,<2.0
 matplotlib>=3.8,<4.0
 pandas>=2.0,<3.0
 nltk>=3.8,<4.0
+whitenoise>=6.0,<7.0
+gunicorn>=21.0,<22.0
